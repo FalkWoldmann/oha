@@ -82,11 +82,11 @@ impl FromStr for ConnectToEntry {
 }
 
 #[cfg(feature = "vsock")]
-pub fn parse_vsock_addr(s: &str) -> Result<tokio_vsock::VsockAddr, String> {
+pub fn parse_vsock_addr(s: &str) -> Result<vsock::VsockAddr, String> {
     let (cid, port) = s
         .split_once(':')
         .ok_or("syntax for --vsock-addr is cid:port")?;
-    Ok(tokio_vsock::VsockAddr::new(
+    Ok(vsock::VsockAddr::new(
         cid.parse()
             .map_err(|err| format!("cid must be a u32, but got {cid}: {err}"))?,
         port.parse()

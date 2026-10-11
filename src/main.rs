@@ -37,6 +37,7 @@ mod pcg64si;
 mod printer;
 mod request_generator;
 mod result_data;
+mod runtime;
 mod timescale;
 mod tls_config;
 mod url_generator;
@@ -302,7 +303,7 @@ Note: if used several times for the same host:port:target_host:target_port, a ra
         value_parser = cli::parse_vsock_addr,
         group = "socket-type"
     )]
-    vsock_addr: Option<tokio_vsock::VsockAddr>,
+    vsock_addr: Option<vsock::VsockAddr>,
     #[arg(
         help = "Include a response status code successful or not successful breakdown for the time histogram and distribution statistics",
         long = "stats-success-breakdown"
@@ -333,7 +334,7 @@ Note: if used several times for the same host:port:target_host:target_port, a ra
     )]
     time_unit: Option<TimeScale>,
     #[arg(
-        help = "Number of native OS threads used by the async runtime (tokio). Defaults to the number of physical CPU cores.",
+        help = "Number of worker threads. Each one drives its own async runtime (compio). Defaults to the number of physical CPU cores.",
         long = "worker-threads",
         env = "TOKIO_WORKER_THREADS",
         default_value_t = std::num::NonZeroUsize::new(num_cpus::get_physical())
@@ -573,12 +574,7 @@ async fn run(mut opts: Opts) -> anyhow::Result<()> {
     };
     let (config, mut resolver_opts) = system_resolv_conf()?;
     resolver_opts.ip_strategy = ip_strategy;
-    let resolver = hickory_resolver::Resolver::builder_with_config(
-        config,
-        hickory_resolver::net::runtime::TokioRuntimeProvider::default(),
-    )
-    .with_options(resolver_opts)
-    .build()?;
+    let dns = client::Dns::new(config, resolver_opts, opts.connect_to)?;
     let cacert = opts.cacert.as_deref().map(std::fs::read).transpose()?;
     let client_auth = match (opts.cert, opts.key) {
         (Some(cert), Some(key)) => Some((std::fs::read(cert)?, std::fs::read(key)?)),
@@ -608,10 +604,7 @@ async fn run(mut opts: Opts) -> anyhow::Result<()> {
         },
         proxy_http_version,
         proxy_headers,
-        dns: client::Dns {
-            resolver,
-            connect_to: opts.connect_to,
-        },
+        dns,
         timeout: opts.timeout.map(|d| d.into()),
         connect_timeout: opts.connect_timeout.into(),
         redirect_limit: opts.redirect,
@@ -740,26 +733,26 @@ async fn run(mut opts: Opts) -> anyhow::Result<()> {
                 let data_collector = if no_tui {
                     // When `--no-tui` is enabled, just collect all data.
 
-                    let token = tokio_util::sync::CancellationToken::new();
+                    let token = runtime::CancellationToken::new();
                     let result_rx_ctrl_c = result_rx.clone();
                     let token_ctrl_c = token.clone();
-                    let ctrl_c = tokio::spawn(async move {
-                        tokio::select! {
-                            _ = tokio::signal::ctrl_c() => {
-                                let mut all: ResultData = Default::default();
-                                let mut buf = Vec::new();
-                                let _ = result_rx_ctrl_c.drain_into(&mut buf);
-                                for res in buf {
-                                    all.push(res);
-                                }
-                                let _ = printer::print_result(print_config, start, &all, start.elapsed());
-                                std::process::exit(libc::EXIT_SUCCESS);
+                    let ctrl_c = compio::runtime::spawn(async move {
+                        if token_ctrl_c
+                            .run_until_cancelled(compio::signal::ctrl_c())
+                            .await
+                            .is_some()
+                        {
+                            let mut all: ResultData = Default::default();
+                            let mut buf = Vec::new();
+                            let _ = result_rx_ctrl_c.drain_into(&mut buf);
+                            for res in buf {
+                                all.push(res);
                             }
-                            _ = token_ctrl_c.cancelled() => {
-                                print_config
-                            }
-
+                            let _ =
+                                printer::print_result(print_config, start, &all, start.elapsed());
+                            std::process::exit(libc::EXIT_SUCCESS);
                         }
+                        print_config
                     });
 
                     Box::pin(async move {
@@ -774,7 +767,7 @@ async fn run(mut opts: Opts) -> anyhow::Result<()> {
                         as Pin<Box<dyn std::future::Future<Output = (ResultData, PrintConfig)>>>
                 } else {
                     // Spawn monitor future which draws realtime tui
-                    let join_handle = tokio::spawn(
+                    let join_handle = compio::runtime::spawn(
                         monitor::Monitor {
                             print_config,
                             end_line: opts
@@ -812,6 +805,7 @@ async fn run(mut opts: Opts) -> anyhow::Result<()> {
                                     n_requests,
                                     n_connections,
                                     n_http2_parallel,
+                                    opts.worker_threads,
                                 )
                                 .await;
                             } else {
@@ -822,6 +816,7 @@ async fn run(mut opts: Opts) -> anyhow::Result<()> {
                                     n_requests,
                                     n_connections,
                                     n_http2_parallel,
+                                    opts.worker_threads,
                                 )
                                 .await;
                             }
@@ -832,6 +827,7 @@ async fn run(mut opts: Opts) -> anyhow::Result<()> {
                                 n_requests,
                                 n_connections,
                                 n_http2_parallel,
+                                opts.worker_threads,
                             )
                             .await;
                         }
@@ -855,6 +851,7 @@ async fn run(mut opts: Opts) -> anyhow::Result<()> {
                                     n_connections,
                                     n_http2_parallel,
                                     wait_ongoing_requests_after_deadline,
+                                    opts.worker_threads,
                                 )
                                 .await;
                             } else {
@@ -867,6 +864,7 @@ async fn run(mut opts: Opts) -> anyhow::Result<()> {
                                     n_connections,
                                     n_http2_parallel,
                                     wait_ongoing_requests_after_deadline,
+                                    opts.worker_threads,
                                 )
                                 .await;
                             }
@@ -878,6 +876,7 @@ async fn run(mut opts: Opts) -> anyhow::Result<()> {
                                 n_connections,
                                 n_http2_parallel,
                                 wait_ongoing_requests_after_deadline,
+                                opts.worker_threads,
                             )
                             .await;
                         }
@@ -998,11 +997,7 @@ fn main() {
         return;
     }
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(opts.worker_threads.get())
-        .enable_all()
-        .build()
-        .unwrap();
+    let rt = runtime::build_runtime().unwrap();
 
     if let Err(e) = rt.block_on(run(opts)) {
         eprintln!("Error: {e}");

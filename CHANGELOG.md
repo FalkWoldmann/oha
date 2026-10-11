@@ -1,5 +1,8 @@
 # Unreleased
 
+- Replace tokio with compio as the async runtime. It uses io_uring on Linux and falls back to epoll where io_uring is unavailable
+- Bump MSRV to 1.95, which compio needs
+
 # 1.16.0 (2026-08-23)
 
 - Support HTTP QUERY method #894

@@ -9,7 +9,7 @@
 
 oha is a tiny program that sends some load to a web application and show realtime tui inspired by [rakyll/hey](https://github.com/rakyll/hey).
 
-This program is written in Rust and powered by [tokio](https://github.com/tokio-rs/tokio) and beautiful tui by [ratatui](https://github.com/ratatui-org/ratatui).
+This program is written in Rust and powered by [compio](https://github.com/compio-rs/compio) and beautiful tui by [ratatui](https://github.com/ratatui-org/ratatui).
 
 ![demo](demo.gif)
 
@@ -231,7 +231,7 @@ Options:
   -u, --time-unit <TIME_UNIT>
           Time unit to be used. If not specified, the time unit is determined automatically. This option affects only text format. [possible values: ns, us, ms, s, m, h]
       --worker-threads <WORKER_THREADS>
-          Number of native OS threads used by the async runtime (tokio).
+          Number of worker threads. Each one drives its own async runtime (compio).
           Takes precedence over the TOKIO_WORKER_THREADS environment variable. When neither is set, the number of physical CPU cores is used.
   -h, --help
           Print help

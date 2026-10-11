@@ -77,8 +77,8 @@ impl RuslsConfigs {
 
 #[cfg(all(feature = "native-tls", not(feature = "rustls")))]
 pub struct NativeTlsConnectors {
-    pub no_alpn: tokio_native_tls::TlsConnector,
-    pub alpn_h2: tokio_native_tls::TlsConnector,
+    pub no_alpn: compio::tls::TlsConnector,
+    pub alpn_h2: compio::tls::TlsConnector,
 }
 
 #[cfg(all(feature = "native-tls", not(feature = "rustls")))]
@@ -125,7 +125,7 @@ impl NativeTlsConnectors {
         }
     }
 
-    pub fn connector(&self, is_http2: bool) -> &tokio_native_tls::TlsConnector {
+    pub fn connector(&self, is_http2: bool) -> &compio::tls::TlsConnector {
         if is_http2 {
             &self.alpn_h2
         } else {
