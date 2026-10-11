@@ -2197,6 +2197,26 @@ pub mod fast {
 
     use super::Client;
 
+    /// Number of connections for each worker thread. Threads without a connection are omitted.
+    pub(crate) fn connections_per_thread(
+        n_connections: usize,
+        num_threads: usize,
+    ) -> impl Iterator<Item = usize> {
+        (0..num_threads).filter_map(move |i| {
+            let num_connection = n_connections / num_threads
+                + (if (n_connections % num_threads) > i {
+                    1
+                } else {
+                    0
+                });
+            if num_connection > 0 {
+                Some(num_connection)
+            } else {
+                None
+            }
+        })
+    }
+
     /// Run n tasks by m workers
     pub async fn work(
         client: Arc<Client>,
@@ -2222,19 +2242,7 @@ pub mod fast {
 
         let counter = Arc::new(AtomicIsize::new(n_tasks as isize));
         let num_threads = worker_threads.get();
-        let connections = (0..num_threads).filter_map(|i| {
-            let num_connection = n_connections / num_threads
-                + (if (n_connections % num_threads) > i {
-                    1
-                } else {
-                    0
-                });
-            if num_connection > 0 {
-                Some(num_connection)
-            } else {
-                None
-            }
-        });
+        let connections = connections_per_thread(n_connections, num_threads);
         let token = tokio_util::sync::CancellationToken::new();
 
         let handles = match client.work_type() {
@@ -2452,19 +2460,7 @@ pub mod fast {
         let num_threads = worker_threads.get();
 
         let is_end = Arc::new(AtomicBool::new(false));
-        let connections = (0..num_threads).filter_map(|i| {
-            let num_connection = n_connections / num_threads
-                + (if (n_connections % num_threads) > i {
-                    1
-                } else {
-                    0
-                });
-            if num_connection > 0 {
-                Some(num_connection)
-            } else {
-                None
-            }
-        });
+        let connections = connections_per_thread(n_connections, num_threads);
         let token = tokio_util::sync::CancellationToken::new();
         let handles = match client.work_type() {
             #[cfg(feature = "http3")]
@@ -2651,5 +2647,20 @@ pub mod fast {
                 let _ = handle.join();
             }
         });
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::connections_per_thread;
+
+        #[test]
+        fn test_connections_per_thread() {
+            assert_eq!(
+                connections_per_thread(10, 4).collect::<Vec<_>>(),
+                [3, 3, 2, 2]
+            );
+            assert_eq!(connections_per_thread(2, 4).collect::<Vec<_>>(), [1, 1]);
+            assert_eq!(connections_per_thread(0, 4).count(), 0);
+        }
     }
 }

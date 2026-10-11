@@ -935,7 +935,9 @@ pub mod fast {
     };
 
     use crate::{
-        client::Client, client_h3::http3_connection_fast_work_until, result_data::ResultData,
+        client::{Client, fast::connections_per_thread},
+        client_h3::http3_connection_fast_work_until,
+        result_data::ResultData,
     };
 
     /// Run n tasks by m workers
@@ -949,19 +951,7 @@ pub mod fast {
     ) {
         let counter = Arc::new(AtomicIsize::new(n_tasks as isize));
         let num_threads = worker_threads.get();
-        let connections = (0..num_threads).filter_map(|i| {
-            let num_connection = n_connections / num_threads
-                + (if (n_connections % num_threads) > i {
-                    1
-                } else {
-                    0
-                });
-            if num_connection > 0 {
-                Some(num_connection)
-            } else {
-                None
-            }
-        });
+        let connections = connections_per_thread(n_connections, num_threads);
         let token = tokio_util::sync::CancellationToken::new();
         let handles = connections
             .map(|num_connections| {
@@ -1014,19 +1004,7 @@ pub mod fast {
         let num_threads = worker_threads.get();
 
         let is_end = Arc::new(AtomicBool::new(false));
-        let connections = (0..num_threads).filter_map(|i| {
-            let num_connection = n_connections / num_threads
-                + (if (n_connections % num_threads) > i {
-                    1
-                } else {
-                    0
-                });
-            if num_connection > 0 {
-                Some(num_connection)
-            } else {
-                None
-            }
-        });
+        let connections = connections_per_thread(n_connections, num_threads);
         let token = tokio_util::sync::CancellationToken::new();
         let handles = connections
             .map(|num_connections| {
